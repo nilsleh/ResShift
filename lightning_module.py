@@ -81,17 +81,31 @@ class ResShiftLightning(LightningModule):
                 size= (LR.shape[0], noise_chn,) + (latent_resolution, ) * 2,
                 device=LR.device,
                 ) # [micro B, noise_chn, latent_resolution, latent_resolution]
-        
+        model_kwargs = {"lq": LR}
+        # with torch.no_grad():
         losses, _, _ = self.base_diffusion.training_losses(
             model=self.model,
             x_start=HR,
             y=LR,
             t=tt,
             first_stage_model=self.autoencoder,
-            model_kwargs={"lq": LR},
+            model_kwargs=model_kwargs,
             noise=noise,
         )
+
+        # individual losses when using diffusers later on
         
+        # if "diffusers" in self.autoencoder.__class__.__module__:
+        #     z_y = self.autoencoder.encode(F.interpolate(LR, scale_factor=self.base_diffusion.sf, mode='bicubic')).latent_dist.sample()
+        # else:
+        #     z_y = self.autoencoder.encode(F.interpolate(LR, scale_factor=self.base_diffusion.sf, mode='bicubic'))
+        # z_start = self.autoencoder.encode(HR)
+
+        # z_t = self.base_diffusion.q_sample(z_start, z_y, tt, noise=noise)
+
+        # model_output = self.model(z_t, tt, **model_kwargs)
+
+        # my_loss = F.mse_loss(model_output, z_start)
         loss = losses["mse"].mean()
 
         self.log("train_loss", loss, batch_size=batch_size)
