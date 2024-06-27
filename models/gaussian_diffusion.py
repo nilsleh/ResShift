@@ -201,7 +201,7 @@ class GaussianDiffusion:
         """
         if noise is None:
             noise = th.randn_like(x_start)
-        assert noise.shape == x_start.shape
+        assert noise.shape == x_start.shape, "noise must have the same shape as x_start, but got {} and {}".format(noise.shape, x_start.shape)
         return (
             _extract_into_tensor(self.etas, t, x_start.shape) * (y - x_start) + x_start
             + _extract_into_tensor(self.sqrt_etas * self.kappa, t, x_start.shape) * noise

@@ -74,9 +74,13 @@ class BaseSampler:
             # dist.init_process_group(backend='nccl', init_method='env://')
             rank = 0
             torch.cuda.set_device(rank)
-
-        self.num_gpus = num_gpus
-        self.rank = int(os.environ['LOCAL_RANK']) if num_gpus > 1 else 0
+        # import pdb
+        # pdb.set_trace()
+        # self.num_gpus = num_gpus
+        # self.rank = int(os.environ['LOCAL_RANK']) if num_gpus > 1 else 0
+        os.environ['CUDA_VISIBLE_DEVICES'] = str(2)
+        self.num_gpus = 1
+        self.rank = 0
 
     def write_log(self, log_str):
         if self.rank == 0:
@@ -206,6 +210,7 @@ class ResShiftSampler(BaseSampler):
                                 noise_repeat=noise_repeat,
                                 mask=mask_pch,
                                 )     # 1 x c x h x w, [-1, 1]
+                        
                     im_spliter.update(im_sr_pch, index_infos)
                 im_sr_tensor = im_spliter.gather()
             else:
@@ -216,7 +221,6 @@ class ResShiftSampler(BaseSampler):
                             noise_repeat=noise_repeat,
                             mask=mask,
                             )     # 1 x c x h x w, [-1, 1]
-
             im_sr_tensor = im_sr_tensor * 0.5 + 0.5
             if mask_back and mask is not None:
                 mask = mask * 0.5 + 0.5
@@ -272,7 +276,17 @@ class ResShiftSampler(BaseSampler):
                     shuffle=False,
                     drop_last=False,
                     )
-            for data in dataloader:
+            from tqdm import tqdm
+            from hydra.utils import instantiate
+            from lightning_module import ResShiftLightning
+            # load lightningmodule config
+            config_path = "/mnt/SSD2/nils/ResShift/lightning_configs/base.yaml"
+            config = OmegaConf.load(config_path)
+            resshift = instantiate(config.sampler)
+            resshift = resshift.to("cuda:1")
+
+
+            for data in tqdm(dataloader):
                 micro_batchsize = math.ceil(bs / self.num_gpus)
                 ind_start = self.rank * micro_batchsize
                 ind_end = ind_start + micro_batchsize
@@ -283,12 +297,24 @@ class ResShiftSampler(BaseSampler):
                             micro_data['lq'].cuda(),
                             mask=micro_data['mask'].cuda() if 'mask' in micro_data else None,
                             )    # b x h x w x c, [0, 1], RGB
+                    
+                    
+                    out = resshift.predict_step(micro_data["lq"].to("cuda:1"))
 
                     for jj in range(results.shape[0]):
                         im_sr = util_image.tensor2img(results[jj], rgb2bgr=True, min_max=(0.0, 1.0))
                         im_name = Path(micro_data['path'][jj]).stem
                         im_path = out_path / f"{im_name}.png"
                         util_image.imwrite(im_sr, im_path, chn='bgr', dtype_in='uint8')
+
+                    for jj in range(out.shape[0]):
+                        im_sr = util_image.tensor2img(out[jj], rgb2bgr=True, min_max=(0.0, 1.0))
+                        im_name = Path(micro_data['path'][jj]).stem
+                        im_path = out_path / f"{im_name}_my.png"
+                        util_image.imwrite(im_sr, im_path, chn='bgr', dtype_in='uint8')
+
+                    # import pdb
+                    # pdb.set_trace()
             if self.num_gpus > 1:
                 dist.barrier()
         else:

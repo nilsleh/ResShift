@@ -1,0 +1,5 @@
+datamodule:
+  _target_: datamodule.MNISTDatamodule
+  root: /mnt/SSD2/nils/ResShift/data/mnist
+  batch_size: 16
+  num_workers: 4

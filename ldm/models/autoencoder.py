@@ -20,6 +20,8 @@ class VQModelTorch(torch.nn.Module):
         super().__init__()
         self.encoder = Encoder(**ddconfig)
         self.decoder = Decoder(**ddconfig)
+        self.embed_dim = embed_dim
+        self.ch_mult = ddconfig["ch_mult"]
         self.quantize = VectorQuantizer(n_embed, embed_dim, beta=0.25,
                                         remap=remap, sane_index_shape=sane_index_shape)
         self.quant_conv = torch.nn.Conv2d(ddconfig["z_channels"], embed_dim, 1)

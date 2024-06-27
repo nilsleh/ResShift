@@ -721,6 +721,7 @@ class TrainerDifIR(TrainerBase):
         micro_batchsize = self.configs.train.microbatch
         num_grad_accumulate = math.ceil(current_batchsize / micro_batchsize)
 
+        
         for jj in range(0, current_batchsize, micro_batchsize):
             micro_data = {key:value[jj:jj+micro_batchsize,] for key, value in data.items()}
             last_batch = (jj+micro_batchsize >= current_batchsize)
@@ -728,7 +729,7 @@ class TrainerDifIR(TrainerBase):
                     0, self.base_diffusion.num_timesteps,
                     size=(micro_data['gt'].shape[0],),
                     device=f"cuda:{self.rank}",
-                    )
+                    ) # shape microbatchsize
             latent_downsamping_sf = 2**(len(self.configs.autoencoder.params.ddconfig.ch_mult) - 1)
             latent_resolution = micro_data['gt'].shape[-1] // latent_downsamping_sf
             if 'autoencoder' in self.configs:
@@ -738,13 +739,16 @@ class TrainerDifIR(TrainerBase):
             noise = torch.randn(
                     size= (micro_data['gt'].shape[0], noise_chn,) + (latent_resolution, ) * 2,
                     device=micro_data['gt'].device,
-                    )
+                    ) # [micro B, noise_chn, latent_resolution, latent_resolution]
             if self.configs.model.params.cond_lq:
                 model_kwargs = {'lq':micro_data['lq'],}
                 if 'mask' in micro_data:
                     model_kwargs['mask'] = micro_data['mask']
             else:
                 model_kwargs = None
+
+            import pdb
+            pdb.set_trace()
             compute_losses = functools.partial(
                 self.base_diffusion.training_losses,
                 self.model,
