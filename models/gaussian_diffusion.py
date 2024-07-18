@@ -214,7 +214,7 @@ class GaussianDiffusion:
             q(x_{t-1} | x_t, x_0)
 
         """
-        assert x_start.shape == x_t.shape
+        assert x_start.shape == x_t.shape, "x_start and x_t must have the same shape, but got {} and {}".format(x_start.shape, x_t.shape)
         posterior_mean = (
             _extract_into_tensor(self.posterior_mean_coef1, t, x_t.shape) * x_t
             + _extract_into_tensor(self.posterior_mean_coef2, t, x_t.shape) * x_start
@@ -263,6 +263,7 @@ class GaussianDiffusion:
 
         B, C = x_t.shape[:2]
         assert t.shape == (B,)
+
         model_output = model(self._scale_input(x_t, t), t, **model_kwargs)
 
         model_variance = _extract_into_tensor(self.posterior_variance, t, x_t.shape)
@@ -412,10 +413,11 @@ class GaussianDiffusion:
             final = sample["sample"]
         with th.no_grad():
             out = self.decode_first_stage(
-                    final,
+                    final, # LR SHAPE
                     first_stage_model=first_stage_model,
                     consistencydecoder=consistencydecoder,
                     )
+            # out has HR shape
         return out
 
     def p_sample_loop_progressive(
@@ -437,16 +439,20 @@ class GaussianDiffusion:
         Returns a generator over dicts, where each dict is the return value of
         p_sample().
         """
+        # y has LR shape
         if device is None:
             device = next(model.parameters()).device
         z_y = self.encode_first_stage(y, first_stage_model, up_sample=True)
+        # WITHOOUT the autoencoder, LQ also needs to be upsampled
+        model_kwargs["lq"] = self.encode_first_stage(y, first_stage_model, up_sample=True)
+        # z_y has LR shape
 
         # generating noise
         if noise is None:
-            noise = th.randn_like(z_y)
+            noise = th.randn_like(z_y) # LR shape
         if noise_repeat:
             noise = noise[0,].repeat(z_y.shape[0], 1, 1, 1)
-        z_sample = self.prior_sample(z_y, noise)
+        z_sample = self.prior_sample(z_y, noise) # has LR shape
 
         indices = list(range(self.num_timesteps))[::-1]
         if progress:
@@ -456,7 +462,8 @@ class GaussianDiffusion:
             indices = tqdm(indices)
 
         for i in indices:
-            t = th.tensor([i] * y.shape[0], device=device)
+            t = th.tensor([i] * y.shape[0], device=device) # timesteps as batch dim
+            # [batch_size]
             with th.no_grad():
                 out = self.p_sample(
                     model,
@@ -469,11 +476,14 @@ class GaussianDiffusion:
                     noise_repeat=noise_repeat,
                 )
                 yield out
-                z_sample = out["sample"]
+                z_sample = out["sample"] # LR shape
 
     def decode_first_stage(self, z_sample, first_stage_model=None, consistencydecoder=None):
         batch_size = z_sample.shape[0]
         data_dtype = z_sample.dtype
+
+        if first_stage_model is None and consistencydecoder is None:
+            return z_sample
 
         if consistencydecoder is None:
             model = first_stage_model
@@ -499,12 +509,13 @@ class GaussianDiffusion:
 
     def encode_first_stage(self, y, first_stage_model, up_sample=False):
         data_dtype = y.dtype
-        model_dtype = next(first_stage_model.parameters()).dtype
+        # model_dtype = next(first_stage_model.parameters()).dtype
         if up_sample and self.sf != 1:
             y = F.interpolate(y, scale_factor=self.sf, mode='bicubic')
         if first_stage_model is None:
             return y
         else:
+            model_dtype = next(first_stage_model.parameters()).dtype
             if not model_dtype == data_dtype:
                 y = y.type(model_dtype)
             with th.no_grad():
@@ -980,6 +991,8 @@ class GaussianDiffusionDDPM:
                     model_kwargs=model_kwargs,
                 )
                 yield out
+                import pdb
+                pdb.set_trace()
                 img = out["sample"]
 
     def ddim_sample(

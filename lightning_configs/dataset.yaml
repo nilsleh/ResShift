@@ -1,5 +1,30 @@
 datamodule:
-  _target_: datamodule.MNISTDatamodule
-  root: /mnt/SSD2/nils/ResShift/data/mnist
+  _target_: swot_datamodule.SWOTDatamodule
+  lr_path: "/mnt/SSD2/nils/datasets/swot_simulated/dc_ref_low_res_8.nc"
+  hr_path: "/mnt/SSD2/nils/datasets/swot_simulated/dc_ref.nc"
+  train_patcher_kw: 
+    patches:
+      time: 1
+      lat: 32
+      lon: 32
+    strides:
+      time: 1
+      lat: 8
+      lon: 8
+  val_patcher_kw:
+    patches:
+      time: 1
+      lat: 32
+      lon: 32
+    strides:
+      time: 1
+      lat: 8
+      lon: 8
   batch_size: 16
   num_workers: 4
+
+# datamodule:
+#   _target_: imagenet_loader.ImagenetLoader
+#   batch_size: 2
+#   num_workers: 2
+

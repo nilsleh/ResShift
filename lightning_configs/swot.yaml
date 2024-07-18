@@ -1,50 +1,24 @@
-experiment:
-  experiment_name: "resshift"
-  exp_dir: "experiments"
-wandb:
-  project: resshift
-  entity: uq-regression
-  mode: offline
-
-
 uq_method:
   _target_: lightning_module.resshift_with_checkpoint
   autoencoder: null
-  #   _target_: ldm.models.autoencoder.VQModelTorch
-  #   embed_dim: 3
-  #   n_embed: 8192
-  #   ddconfig:
-  #     double_z: False
-  #     z_channels: 3
-  #     resolution: 256
-  #     in_channels: 3
-  #     out_ch: 3
-  #     ch: 128
-  #     ch_mult:
-  #     - 1
-  #     - 2
-  #     - 4
-  #     num_res_blocks: 2
-  #     attn_resolutions: []
-  #     dropout: 0.0
-  #     padding_mode: zeros
-
-  # autoencoder_ckpt: weights/autoencoder_vq_f4.pth
 
   model:
     _target_: models.unet.UNetModelSwin
-    image_size: 64
-    in_channels: 3
-    model_channels: 160
-    out_channels: 3
-    attention_resolutions: [64,32,16,8]
+    image_size: 32 # LQ size
+    in_channels: 1
+    # model_channels: 160
+    model_channels: 32
+    out_channels: 1
+    # attention_resolutions: [64,32,16,8]
+    attention_resolutions: [16,8, 8, 4]
     dropout: 0
     channel_mult: [1, 2, 2, 4]
+    # channel_mult: [1, 2]
     num_res_blocks: [2, 2, 2, 2]
     conv_resample: True
-    dims: 2
+    dims: 2 # convolution dimensions? 
     use_fp16: False
-    num_head_channels: 32
+    num_head_channels: 8
     use_scale_shift_norm: True
     resblock_updown: False
     swin_depth: 2
@@ -52,11 +26,11 @@ uq_method:
     window_size: 8
     mlp_ratio: 4
     cond_lq: True
-    lq_size: 64
+    lq_size: 32 # LQ size
 
   base_diffusion:
     _target_: models.script_util.create_gaussian_diffusion
-    sf: 4
+    sf: 8
     schedule_name: exponential
     schedule_kwargs:
       power: 0.3
@@ -69,13 +43,22 @@ uq_method:
     timestep_respacing: ~
     scale_factor: 1.0
     normalize_input: True
-    latent_flag: True
+    latent_flag: False
 
+
+experiment:
+  experiment_name: "resshift"
+  exp_dir: "experiments"
+wandb:
+  project: resshift
+  entity: uq-regression
+  mode: online
 
 trainer:
   _target_: lightning.Trainer
   accelerator: gpu
-  devices: [6]
+  strategy: ddp
+  devices: [1, 7]
   min_epochs: 80
   max_epochs: 100
   log_every_n_steps: 20

@@ -10,6 +10,7 @@ from omegaconf import OmegaConf
 from hydra.utils import instantiate
 from tqdm import tqdm
 import torch.nn.functional as F
+from itertools import chain
 
 # TODOs:
 # 1. Implement ResShiftLightning
@@ -26,6 +27,7 @@ class ResShiftLightning(LightningModule):
         base_diffusion: nn.Module,
         model: nn.Module,
         autoencoder: nn.Module | None,
+        num_in_channels: int = 3,
         optimizer: OptimizerCallable = torch.optim.Adam,
         lr_scheduler: LRSchedulerCallable | None = None,
     ):
@@ -34,6 +36,7 @@ class ResShiftLightning(LightningModule):
         Args:
             base_diffusion_model: Base model that has the diffusion logic implemented
             model: The Unet model doing the denoising
+            num_in_channels: number of input channels of the data
             autoencoder: Autoencoder model, recommended to use Stable Diffusion VAE
         """
         super().__init__()
@@ -44,6 +47,20 @@ class ResShiftLightning(LightningModule):
 
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
+
+        if num_in_channels != 3 and self.autoencoder:
+            self.init_conv = nn.Sequential(
+                nn.Conv2d(num_in_channels, 3, kernel_size=3, padding=1),
+                nn.BatchNorm2d(3),
+                nn.ReLU(),
+                nn.Conv2d(3, 3, kernel_size=3, padding=1),
+                nn.BatchNorm2d(3),
+                nn.Tanh(), # back to [-1, 1] normalization
+            )
+        else:
+            self.init_conv = nn.Identity()
+
+
 
     def training_step(
         self, batch: dict[str, Tensor], batch_idx: int, dataloader_idx: int = 0
@@ -59,8 +76,13 @@ class ResShiftLightning(LightningModule):
             training loss
         """
         
-        batch = torch.load("/mnt/SSD2/nils/ResShift/example_batch.pth", map_location=self.device)
-        LR, HR = batch["LR"], batch["HR"]
+        # batch = torch.load("/mnt/SSD2/nils/ResShift/example_batch.pth", map_location=self.device)
+        LR, HR = batch["lr"], batch["hr"]
+
+        # import pdb
+        # pdb.set_trace()
+        LR = self.init_conv(LR)
+
         # LR = LR.to(self.device)
         # HR = HR.to(self.device)
 
@@ -73,22 +95,36 @@ class ResShiftLightning(LightningModule):
             device=LR.device,
         )  # shape microbatchsize
 
-        noise_chn = self.autoencoder.embed_dim
-        latent_downsamping_sf = 2**(len(self.autoencoder.ch_mult) - 1)
-        latent_resolution = HR.shape[-1] // latent_downsamping_sf
 
-        noise = torch.randn(
+        if self.autoencoder:
+            noise_chn = self.autoencoder.embed_dim
+            latent_downsamping_sf = 2**(len(self.autoencoder.ch_mult) - 1)
+            latent_resolution = HR.shape[-1] // latent_downsamping_sf
+            noise = torch.randn(
                 size= (LR.shape[0], noise_chn,) + (latent_resolution, ) * 2,
                 device=LR.device,
-                ) # [micro B, noise_chn, latent_resolution, latent_resolution]
-        model_kwargs = {"lq": LR}
+                )
+        else:
+            noise = torch.randn(
+                size= (LR.shape[0], LR.shape[1],) + (HR.shape[-1], ) * 2,
+                device=LR.device,
+                )
+        # noise = torch.randn(
+        #         size= (LR.shape[0], noise_chn,) + (latent_resolution, ) * 2,
+        #         device=LR.device,
+        #         ) # [micro B, noise_chn, latent_resolution, latent_resolution]
+
+        model_kwargs = {"lq": LR if self.autoencoder else F.interpolate(LR, scale_factor=self.base_diffusion.sf, mode='bicubic')}
+        # model_kwargs = {"lq": LR}
+        
         # with torch.no_grad():
         losses, _, _ = self.base_diffusion.training_losses(
             model=self.model,
             x_start=HR,
             y=LR,
             t=tt,
-            first_stage_model=self.autoencoder,
+            # first_stage_model=self.autoencoder,
+            first_stage_model = self.autoencoder,
             model_kwargs=model_kwargs,
             noise=noise,
         )
@@ -108,7 +144,7 @@ class ResShiftLightning(LightningModule):
         # my_loss = F.mse_loss(model_output, z_start)
         loss = losses["mse"].mean()
 
-        self.log("train_loss", loss, batch_size=batch_size)
+        self.log("train_loss", loss.detach(), batch_size=batch_size)
 
         return loss
     
@@ -188,6 +224,11 @@ class ResShiftLightning(LightningModule):
         #         results = self.autoencoder.decode(z_sample)
 
         return results.clamp_(-1.0, 1.0) * 0.5 + 0.5
+    
+    def on_after_backward(self):
+        for name, param in self.named_parameters():
+            if param.grad is None:
+                print(name)
 
     def configure_optimizers(self) -> dict[str, Any]:
         """Initialize the optimizer and learning rate scheduler.
@@ -195,8 +236,9 @@ class ResShiftLightning(LightningModule):
         Returns:
             a "lr dict" according to the pytorch lightning documentation
         """
-        # we only train the model not the autoencoder
-        optimizer = self.optimizer(self.model.parameters())
+        # we only train the model not the autoencoder, but also init_conv
+        optimizer = self.optimizer(chain(self.model.parameters(), self.init_conv.parameters()))
+
         if self.lr_scheduler is not None:
             lr_scheduler = self.lr_scheduler(optimizer)
             return {
@@ -231,24 +273,27 @@ def reload_model(model: nn.Module, ckpt: dict[str, Any]) -> None:
 def resshift_with_checkpoint(
     base_diffusion,
     model,
-    autoencoder,
+    autoencoder: nn.Module | None = None,
     model_ckpt: str | None = None,
     autoencoder_ckpt: str | None = None,
+    num_in_channels: int = 3,
 ) -> ResShiftLightning:
     """Load LightningModule with checkpoint."""
     # model checkpoint
     if model_ckpt is not None:
-        state_dict = torch.load(model_ckpt)
+        state_dict = torch.load(model_ckpt, map_location="cpu")
         reload_model(model, state_dict)
 
     if autoencoder_ckpt is not None:
-        state_dict = torch.load(autoencoder_ckpt)
+        state_dict = torch.load(autoencoder_ckpt, map_location="cpu")
         autoencoder.load_state_dict(state_dict)
 
     resshift = ResShiftLightning(
         base_diffusion=base_diffusion,
         model=model,
         autoencoder=autoencoder,
+        num_in_channels=num_in_channels,
     )
 
     return resshift
+

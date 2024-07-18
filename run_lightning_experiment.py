@@ -97,7 +97,6 @@ if __name__ == "__main__":
         default="lightning_configs/dataset.yaml",
         help="Path to the data config file",
     )
-    # parser.add_argument("--gpu", type=int, default=0, help="GPU ID to use")
 
     args = parser.parse_args()
 

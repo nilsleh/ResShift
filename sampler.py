@@ -187,7 +187,6 @@ class ResShiftSampler(BaseSampler):
             Output:
                 im_sr: h x w x c, numpy array, [0,1], RGB
             '''
-
             context = torch.cuda.amp.autocast if self.use_amp else nullcontext
             if im_lq_tensor.shape[2] > self.chop_size or im_lq_tensor.shape[3] > self.chop_size:
                 if mask is not None:
@@ -206,6 +205,7 @@ class ResShiftSampler(BaseSampler):
                         mask_pch = None
                     with context():
                         im_sr_pch = self.sample_func(
+                                # this is [batch_size, channels, 64, 64] so 256 / chop size = 4
                                 im_lq_pch,
                                 noise_repeat=noise_repeat,
                                 mask=mask_pch,
@@ -280,13 +280,21 @@ class ResShiftSampler(BaseSampler):
             from hydra.utils import instantiate
             from lightning_module import ResShiftLightning
             # load lightningmodule config
-            config_path = "/mnt/SSD2/nils/ResShift/lightning_configs/base.yaml"
+            config_path = "/mnt/SSD2/nils/ResShift/lightning_configs/swot.yaml"
             config = OmegaConf.load(config_path)
-            resshift = instantiate(config.sampler)
-            resshift = resshift.to("cuda:1")
+            resshift = instantiate(config.uq_method)
+            resshift = resshift.to("cuda:4")
+            
 
 
             for data in tqdm(dataloader):
+                # dict_keys ["image", "lq", "path"]
+                # image bs x 3 x 256, 256
+                # lq bs x 3 x 256 , 256
+                out = resshift.predict_step(data["image"].to("cuda:4"))
+                import pdb
+                pdb.set_trace()
+
                 micro_batchsize = math.ceil(bs / self.num_gpus)
                 ind_start = self.rank * micro_batchsize
                 ind_end = ind_start + micro_batchsize

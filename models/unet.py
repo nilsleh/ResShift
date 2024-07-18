@@ -424,6 +424,8 @@ class UNetModel(nn.Module):
             self.label_emb = nn.Embedding(num_classes, time_embed_dim)
 
         ch = input_ch = int(channel_mult[0] * model_channels)
+        import pdb
+        pdb.set_trace()
         self.input_blocks = nn.ModuleList(
             [TimestepEmbedSequential(conv_nd(dims, in_channels, ch, 3, padding=1))]
         )
@@ -688,19 +690,25 @@ class UNetModelSwin(nn.Module):
 
         if cond_lq and lq_size == image_size:
             self.feature_extractor = nn.Identity()
-            base_chn = 4 if cond_mask else 3
+            # base_chn = 4 if cond_mask else 3
+            base_chn = self.in_channels
         else:
+            # self.feature_extractor = nn.Identity()
+            # base_chn = self.in_channels
             feature_extractor = []
-            feature_chn = 4 if cond_mask else 3
+            # feature_chn = 4 if cond_mask else 3
+            feature_chn = 1
             base_chn = 16
             for ii in range(int(math.log(lq_size / image_size) / math.log(2))):
-                feature_extractor.append(nn.Conv2d(feature_chn, base_chn, 3, 1, 1))
+            # for ii in range(1):
+                feature_extractor.append(nn.Conv2d(feature_chn, base_chn, 3, 1, padding=2))
                 feature_extractor.append(nn.SiLU())
                 feature_extractor.append(Downsample(base_chn, True, out_channels=base_chn*2))
                 base_chn *= 2
                 feature_chn = base_chn
             self.feature_extractor = nn.Sequential(*feature_extractor)
 
+        
         ch = input_ch = int(channel_mult[0] * model_channels)
         in_channels += base_chn
         self.input_blocks = nn.ModuleList(
@@ -872,13 +880,14 @@ class UNetModelSwin(nn.Module):
         """
         hs = []
         emb = self.time_embed(timestep_embedding(timesteps, self.model_channels)).type(self.dtype)
-
+        
         if lq is not None:
             assert self.cond_lq
             if mask is not None:
                 assert self.cond_mask
                 lq = th.cat([lq, mask], dim=1)
             lq = self.feature_extractor(lq.type(self.dtype))
+            # x and LQ botht have LR shape
             x = th.cat([x, lq], dim=1)
 
 

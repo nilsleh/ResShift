@@ -730,16 +730,25 @@ class TrainerDifIR(TrainerBase):
                     size=(micro_data['gt'].shape[0],),
                     device=f"cuda:{self.rank}",
                     ) # shape microbatchsize
-            latent_downsamping_sf = 2**(len(self.configs.autoencoder.params.ddconfig.ch_mult) - 1)
-            latent_resolution = micro_data['gt'].shape[-1] // latent_downsamping_sf
-            if 'autoencoder' in self.configs:
+            # latent_downsamping_sf = 2**(len(self.configs.autoencoder.params.ddconfig.ch_mult) - 1)
+            # latent_resolution = micro_data['gt'].shape[-1] // latent_downsamping_sf
+            # if 'autoencoder' in self.configs:
+            if self.configs.autoencoder is not None:
                 noise_chn = self.configs.autoencoder.params.embed_dim
-            else:
-                noise_chn = micro_data['gt'].shape[1]
-            noise = torch.randn(
+                latent_downsamping_sf = 2**(len(self.configs.autoencoder.params.ddconfig.ch_mult) - 1)
+                latent_resolution = micro_data['gt'].shape[-1] // latent_downsamping_sf
+                noise = torch.randn(
                     size= (micro_data['gt'].shape[0], noise_chn,) + (latent_resolution, ) * 2,
                     device=micro_data['gt'].device,
                     ) # [micro B, noise_chn, latent_resolution, latent_resolution]
+            else:
+                noise_chn = micro_data['gt'].shape[1]
+                noise = torch.randn(
+                    size=(micro_data['gt'].shape[0], noise_chn,) + micro_data['gt'].shape[2:],
+                    device=micro_data['gt'].device,
+                )
+
+              
             if self.configs.model.params.cond_lq:
                 model_kwargs = {'lq':micro_data['lq'],}
                 if 'mask' in micro_data:
@@ -747,8 +756,6 @@ class TrainerDifIR(TrainerBase):
             else:
                 model_kwargs = None
 
-            import pdb
-            pdb.set_trace()
             compute_losses = functools.partial(
                 self.base_diffusion.training_losses,
                 self.model,
@@ -765,6 +772,7 @@ class TrainerDifIR(TrainerBase):
                 with self.model.no_sync():
                     losses, z0_pred, z_t = self.backward_step(compute_losses, micro_data, num_grad_accumulate, tt)
 
+            print(losses.shape)
             # make logging
             if last_batch:
                 self.log_step_train(losses, tt, micro_data, z_t, z0_pred.detach())
